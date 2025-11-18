@@ -40,13 +40,19 @@ class UserCardEntry {
 
 /// Contract for a collection repository.
 abstract class CollectionRepository {
+  /// All cards in the current user's collection.
   Future<List<UserCardEntry>> getUserCollection();
-  Future<UserCardEntry> addCard(String cardId, {int quantity});
 
+  /// Insert a new user_cards row.
+  Future<UserCardEntry> addCard(String cardId, {int quantity = 1});
+
+  /// Get a single user_cards row for the given cardId, or null if user doesn't own it.
   Future<UserCardEntry?> getUserCardForCard(String cardId);
 
+  /// Add to an existing user_cards row if present, otherwise create a new row.
   Future<UserCardEntry> addOrIncrementCard(String cardId, {int quantity = 1});
 
+  /// Decrement quantity or delete the row if it hits zero.
   Future<UserCardEntry?> decrementOrRemoveCard(String cardId, {int quantity = 1});
 }
 
@@ -62,154 +68,6 @@ class SupabaseCollectionRepository implements CollectionRepository {
     if (user == null) {
       throw StateError('No user logged in');
     }
-  @override
-  Future<UserCardEntry?> getUserCardForCard(String cardId) async {
-    final user = client.auth.currentUser;
-    if (user == null) {
-      throw StateError('No user logged in');
-    }
-
-    final row = await client
-        .from('user_cards')
-        .select('''
-          id,
-          card_id,
-          quantity,
-          card:cards(
-            name,
-            rarity,
-            image_url,
-            set:set_id(name)
-          )
-        ''')
-        .eq('user_id', user.id)
-        .eq('card_id', cardId)
-        .maybeSingle();
-
-    if (row == null) return null;
-
-    return UserCardEntry.fromMap(row as Map<String, dynamic>);
-  }
-  @override
-  Future<UserCardEntry> addOrIncrementCard(String cardId, {int quantity = 1}) async {
-    final user = client.auth.currentUser;
-    if (user == null) throw StateError('No user logged in');
-
-    final existing = await client
-        .from('user_cards')
-        .select('''
-          id,
-          card_id,
-          quantity,
-          card:cards(
-            name,
-            rarity,
-            image_url,
-            set:set_id(name)
-          )
-        ''')
-        .eq('user_id', user.id)
-        .eq('card_id', cardId)
-        .maybeSingle();
-
-    if (existing == null) {
-      final inserted = await client
-          .from('user_cards')
-          .insert({
-            'user_id': user.id,
-            'card_id': cardId,
-            'quantity': quantity,
-          })
-          .select('''
-            id,
-            card_id,
-            quantity,
-            card:cards(
-              name,
-              rarity,
-              image_url,
-              set:set_id(name)
-            )
-          ''')
-          .single();
-
-      return UserCardEntry.fromMap(inserted as Map<String, dynamic>);
-    }
-
-    final existingMap = existing as Map<String, dynamic>;
-    final updatedQty = (existingMap['quantity'] as int? ?? 0) + quantity;
-
-    final updated = await client
-        .from('user_cards')
-        .update({'quantity': updatedQty})
-        .eq('id', existingMap['id'])
-        .select('''
-          id,
-          card_id,
-          quantity,
-          card:cards(
-            name,
-            rarity,
-            image_url,
-            set:set_id(name)
-          )
-        ''')
-        .single();
-
-    return UserCardEntry.fromMap(updated as Map<String, dynamic>);
-  }
-  @override
-  Future<UserCardEntry?> decrementOrRemoveCard(String cardId, {int quantity = 1}) async {
-    final user = client.auth.currentUser;
-    if (user == null) throw StateError('No user logged in');
-
-    final existing = await client
-        .from('user_cards')
-        .select('''
-          id,
-          card_id,
-          quantity,
-          card:cards(
-            name,
-            rarity,
-            image_url,
-            set:set_id(name)
-          )
-        ''')
-        .eq('user_id', user.id)
-        .eq('card_id', cardId)
-        .maybeSingle();
-
-    if (existing == null) return null;
-
-    final existingMap = existing as Map<String, dynamic>;
-    final currentQty = existingMap['quantity'] as int? ?? 0;
-    final newQty = currentQty - quantity;
-
-    if (newQty <= 0) {
-      await client.from('user_cards').delete().eq('id', existingMap['id']);
-      return null;
-    }
-
-    final updated = await client
-        .from('user_cards')
-        .update({'quantity': newQty})
-        .eq('id', existingMap['id'])
-        .select('''
-          id,
-          card_id,
-          quantity,
-          card:cards(
-            name,
-            rarity,
-            image_url,
-            set:set_id(name)
-          )
-        ''')
-        .single();
-
-    return UserCardEntry.fromMap(updated as Map<String, dynamic>);
-  }
 
     final rows = await client
         .from('user_cards')
@@ -260,5 +118,166 @@ class SupabaseCollectionRepository implements CollectionRepository {
         .single();
 
     return UserCardEntry.fromMap(inserted as Map<String, dynamic>);
+  }
+
+  /// Get a single entry for the given cardId (or null if user doesn't own it).
+  @override
+  Future<UserCardEntry?> getUserCardForCard(String cardId) async {
+    final user = client.auth.currentUser;
+    if (user == null) {
+      throw StateError('No user logged in');
+    }
+
+    final row = await client
+        .from('user_cards')
+        .select('''
+          id,
+          card_id,
+          quantity,
+          card:cards(
+            name,
+            rarity,
+            image_url,
+            set:set_id(name)
+          )
+        ''')
+        .eq('user_id', user.id)
+        .eq('card_id', cardId)
+        .maybeSingle();
+
+    if (row == null) return null;
+
+    return UserCardEntry.fromMap(row as Map<String, dynamic>);
+  }
+
+  /// Add or increment quantity if row already exists.
+  @override
+  Future<UserCardEntry> addOrIncrementCard(String cardId,
+      {int quantity = 1}) async {
+    final user = client.auth.currentUser;
+    if (user == null) {
+      throw StateError('No user logged in');
+    }
+
+    final existing = await client
+        .from('user_cards')
+        .select('''
+          id,
+          card_id,
+          quantity,
+          card:cards(
+            name,
+            rarity,
+            image_url,
+            set:set_id(name)
+          )
+        ''')
+        .eq('user_id', user.id)
+        .eq('card_id', cardId)
+        .maybeSingle();
+
+    if (existing == null) {
+      final inserted = await client
+          .from('user_cards')
+          .insert({
+            'user_id': user.id,
+            'card_id': cardId,
+            'quantity': quantity,
+          })
+          .select('''
+            id,
+            card_id,
+            quantity,
+            card:cards(
+              name,
+              rarity,
+              image_url,
+              set:set_id(name)
+            )
+          ''')
+          .single();
+
+      return UserCardEntry.fromMap(inserted as Map<String, dynamic>);
+    }
+
+    final existingMap = existing as Map<String, dynamic>;
+    final currentQty = existingMap['quantity'] as int? ?? 0;
+    final newQty = currentQty + quantity;
+
+    final updated = await client
+        .from('user_cards')
+        .update({'quantity': newQty})
+        .eq('id', existingMap['id'])
+        .select('''
+          id,
+          card_id,
+          quantity,
+          card:cards(
+            name,
+            rarity,
+            image_url,
+            set:set_id(name)
+          )
+        ''')
+        .single();
+
+    return UserCardEntry.fromMap(updated as Map<String, dynamic>);
+  }
+
+  /// Decrement quantity or delete row if it hits zero.
+  @override
+  Future<UserCardEntry?> decrementOrRemoveCard(String cardId,
+      {int quantity = 1}) async {
+    final user = client.auth.currentUser;
+    if (user == null) {
+      throw StateError('No user logged in');
+    }
+
+    final existing = await client
+        .from('user_cards')
+        .select('''
+          id,
+          card_id,
+          quantity,
+          card:cards(
+            name,
+            rarity,
+            image_url,
+            set:set_id(name)
+          )
+        ''')
+        .eq('user_id', user.id)
+        .eq('card_id', cardId)
+        .maybeSingle();
+
+    if (existing == null) return null;
+
+    final existingMap = existing as Map<String, dynamic>;
+    final currentQty = existingMap['quantity'] as int? ?? 0;
+    final newQty = currentQty - quantity;
+
+    if (newQty <= 0) {
+      await client.from('user_cards').delete().eq('id', existingMap['id']);
+      return null;
+    }
+
+    final updated = await client
+        .from('user_cards')
+        .update({'quantity': newQty})
+        .eq('id', existingMap['id'])
+        .select('''
+          id,
+          card_id,
+          quantity,
+          card:cards(
+            name,
+            rarity,
+            image_url,
+            set:set_id(name)
+          )
+        ''')
+        .single();
+
+    return UserCardEntry.fromMap(updated as Map<String, dynamic>);
   }
 }
